@@ -1,12 +1,13 @@
 # 温室分区轮灌编排台
 
-基于 **Python Flask + SQLite + 原生 HTML/CSS/JavaScript** 的温室管理工具，包含五个页面：
+基于 **Python Flask + SQLite + 原生 HTML/CSS/JavaScript** 的温室管理工具，包含六个页面：
 
 1. **温室分区轮灌编排台**（`/`）：以 **15 分钟为最小粒度**，在总流量、阀门并发上限、允许灌溉时段和停水时段四类约束下自动生成一天的轮灌计划，并在时间轴上直观标出冲突原因；支持鼠标拖拽与表单两种方式微调单个时段，即时校验，可保存到数据库并导出 JSON。
 2. **灌溉水质连续监测**（`/water`）：按水源连续录入带时间戳的 **pH / EC / 浊度 / 硝酸盐** 采样，为每个水源配置各指标正常区间，按「连续两次越界判超标、连续两次回归判恢复」的规则重算状态，支持按水源/日期筛选、最近采样趋势图与 JSON 导出。
 3. **病害接触追踪**（`/disease`）：复用现有温室分区，为一次病害确诊登记**可复用工具的分区到访、合格消毒事件及病害确诊**，按时间重放工具—分区之间的污染传播，输出每个分区的**最早暴露时间、最短事件链与待隔离清单**；补录 / 删除事件后自动重算，确认后**冻结案件快照**，支持筛选与 JSON 导出。
 4. **作物积温预测**（`/heat`）：复用现有温室分区，为种植批次设置**基温、上限温度、目标积温与允许采样间隔**，录入带时间戳的温度；温度截断后对相邻读数做**梯形积分并按午夜拆分**，间隔超限**只登记缺口、不累计**；补录 / 删除读数后按时间全量重算，给出**每日积温、累计值、首次达标时刻与缺口清单**，未达标时以最近 7 个无缺口完整日的日均积温外推预计日期（样本不足明确不可预测）；页面展示温度 / 累计积温曲线与每日台账，支持按分区、批次筛选及 JSON 导出。
 5. **滴灌均匀度巡检**（`/drip`）：复用现有阀门与分区，一次巡检选择**一条阀门**并为其下各分区配置**基准入口压力、设计滴头流量、DU 下限、尾首降幅阈值与低流量比例**，录入入口压力及**按首 / 中 / 尾编号**的滴头实测流量；每区至少 8 个样本，按流量升序取 `ceil(n/4)` 个计算**低四分位均值 DU**；超过半数分区同时「入口压力低于基准 + DU 合格」时整轮标记**共享供压异常**，未触发时按规则判**支管压损**与**疑似滴头堵塞**；补录 / 删除样本后整轮重算，输出每区 DU、判定依据与维护清单，支持历史筛选与 JSON 导出。
+6. **肥料母液分罐**（`/fertilizer`）：复用现有温室分区，每份配方选择分区并设置 **A/B 罐容量（mL，正整数）**，录入**肥料名称、所需母液量（mL，非负整数；用量为 0 不参与求解）**及**两两不相容关系**；先按不相容图拆分**连通分量并二着色**，再在各分量的两种翻转方向中枚举全局组合，以**满足双罐容量、两罐体积差最小**为目标、同分按 **A 罐肥料 ID 升序序列**决胜；出现**奇环**时返回**最短冲突环**，容量无解时给出**所有组合中的最小总超额及对应分罐结果**（不只显示“无法分配”）；编辑用量 / 关系 / 容量后立即重算，页面展示分罐清单、占用量与冲突链，支持保存及导出 JSON。
 
 ## 一键启动（Docker Compose）
 
@@ -21,8 +22,9 @@ docker compose up --build -d
 - 病害追踪页：**http://localhost:8000/disease**
 - 积温预测页：**http://localhost:8000/heat**
 - 滴灌巡检页：**http://localhost:8000/drip**
+- 母液分罐页：**http://localhost:8000/fertilizer**
 
-五个页面顶部有页签可互相跳转。数据通过 Docker 卷 `irrigation-data` 持久化（容器内 `/app/data/irrigation.db`）。停止与清理：
+六个页面顶部有页签可互相跳转。数据通过 Docker 卷 `irrigation-data` 持久化（容器内 `/app/data/irrigation.db`）。停止与清理：
 
 ```bash
 docker compose down          # 停止（数据保留）
@@ -36,10 +38,10 @@ docker compose down -v       # 停止并删除数据卷
 ```bash
 pip install -r requirements.txt
 python app.py
-# 访问 http://localhost:8000/ 、/water 、/disease 、/heat 、/drip
+# 访问 http://localhost:8000/ 、/water 、/disease 、/heat 、/drip 、/fertilizer
 ```
 
-首次启动会自动建库并写入一套内置示例数据（轮灌示例 + 2 个水源的水质历史采样 + 1 个灰霉病病害追踪示例案件 + 2 个作物积温批次 + 2 轮滴灌均匀度巡检）。
+首次启动会自动建库并写入一套内置示例数据（轮灌示例 + 2 个水源的水质历史采样 + 1 个灰霉病病害追踪示例案件 + 2 个作物积温批次 + 2 轮滴灌均匀度巡检 + 1 份肥料母液分罐配方）。
 
 ## 功能说明
 
@@ -506,6 +508,133 @@ curl -OJ "http://localhost:8000/api/drip/export?round_id=$RID2"
 
 页面侧复核：进入 `/drip`，默认选中「供压异常复核巡检」，顶部红色徽标「共享供压异常」并给出「3/3 超过半数」规则原文，维护清单只有一条 🚨 泵房 / 干管供压核查；从列表选「秋茬滴灌首轮巡检」，黄瓜区卡片为红色「支管压损」（展开可见 DU 0.6869、首/尾中位数与 42.2% 尾首降幅），草莓区合格且列出红色 H08 堵塞芯片与 🔧 维护项，叶菜区黄色「入口压力偏低」；左上方按「中部干管」筛选只列这两轮，改巡检日期可进一步过滤；在样本明细里删掉 H08 后维护清单同步少一条堵塞项，给某分区补录到 8 个样本后 DU 立即出现，全部为整轮重算结果。
 
+## 肥料母液分罐（/fertilizer）
+
+复用轮灌台的**温室分区**，为每个施肥配方把母液肥料分到 **A / B 两个母液罐**（钙盐与磷酸盐 / 硫酸盐通常不能同罐），录入用量与不相容关系后自动重算，支持保存与 JSON 导出。
+
+### 数据模型（SQLite）
+
+- **母液配方（fertilizer_recipes）**：名称 + **所属温室分区** + **A 罐容量 / B 罐容量（mL，正整数）** + 备注。分区被配方引用时禁止直接删除分区（返回 400，先删配方）。
+- **肥料（fertilizer_items）**：配方内**名称唯一**，含**所需母液量（mL，非负整数）**；**用量为 0 的肥料不参与求解**（不进不相容图、不占罐），但仍保留其登记数据。
+- **不相容关系（fertilizer_pairs）**：两种肥料的无向对（落库统一为小编号在前，唯一索引防重复），表示二者**必须分到不同罐**；删除任一肥料自动清理其关系。
+
+### 求解规则（每次改用量 / 关系 / 容量后整体重算）
+
+1. **只取用量 > 0 的肥料**构建无向不相容图，按边拆分**连通分量**并 BFS **二着色**（每个分量得到侧 0 / 侧 1 两组）。
+2. **奇环冲突（conflict）**：任一连通分量无法二着色（含奇数环）时返回**长度最短的冲突环**（按最小编号起、唯一方向规整），环上各边高亮，**不再给分罐结果**；解除环上任意一条关系后冲突消失。
+3. **全局翻转组合枚举**：每个分量有两种翻转方向（侧0→A/侧1→B，或反过来），枚举全部 2^k 种组合（分量超过 20 个时组合数过大，明确报错请用户拆配方）。
+4. **决胜顺序**：① 双罐均不超容量的组合优先（可行优先）；② 可行组合中 **|A 体积 − B 体积| 最小**；③ 体积差相同时按 **A 罐肥料 ID 升序序列**字典序决胜。
+5. **容量无解（overflow）**：所有组合都超容量时**绝不只显示“无法分配”**——返回**总超额最小**的组合（超额相同时继续按体积差、A 罐 ID 序列决胜），给出该方案的 **A/B 分罐明细、各自占用 / 超额量与剩余量**。
+6. 组合数 ≤ 128 时，页面可展开**全部组合表**（是否可行、A/B 占用、体积差、总超额、A 罐 ID 序列），便于人工复核决胜过程。
+
+### 页面 / 导出
+
+- 左侧：配方历史列表（状态点、A/B 容量、参与肥料数、占用量）+ 新建 / 编辑配方（分区、A/B 罐容量），**肥料录入**（名称 + 用量，0 即暂不参与）与**不相容关系登记**（两个肥料下拉）。
+- 右侧：总览徽标（✅ 可分配 / 🟠 最小超额方案 / 🔴 奇环冲突 / 📝 空），统计 A/B 占用与体积差；**🔴 冲突链**把最短奇环按 `肥料 ✕ 肥料 ✕ … ✕ 闭环` 展示；**分罐清单**两栏展示 A/B 罐肥料、占用量进度条、容量 / 剩余 / 超额；**连通分量**卡展示每分量两侧着色；**肥料明细**表可就地改用量（失焦即保存重算）、删除肥料；底部为不相容关系 chips（环上的红色高亮，可删除）。
+- **编辑用量、不相容关系或 A/B 罐容量后立即重算**（所有写接口返回重算后的完整状态）；顶部 **⬇ 导出 JSON** 导出当前配方（含全部输入、连通分量、冲突环或全部翻转组合、最终分罐结果），按分区筛选时导出该分区配方列表。
+
+### 操作示例（API）
+
+```bash
+# 1) 新建配方（挂在分区 2 黄瓜区；A/B 罐各 1000 mL）
+curl -X POST http://localhost:8000/api/fertilizer/recipes \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"复核配方","zone_id":2,"cap_a":1000,"cap_b":1000}'
+
+# 2) 录入肥料（用量 mL；0 表示暂不参与求解）
+curl -X POST http://localhost:8000/api/fertilizer/recipes/1/items \
+  -H 'Content-Type: application/json' -d '{"name":"硝酸钙","amount":300}'
+curl -X POST http://localhost:8000/api/fertilizer/recipes/1/items \
+  -H 'Content-Type: application/json' -d '{"name":"硝酸钾","amount":400}'
+curl -X POST http://localhost:8000/api/fertilizer/recipes/1/items \
+  -H 'Content-Type: application/json' -d '{"name":"硫酸镁","amount":300}'
+
+# 3) 登记不相容（钙盐不能与硫酸盐 / 大量钾盐同罐）
+curl -X POST http://localhost:8000/api/fertilizer/recipes/1/pairs \
+  -H 'Content-Type: application/json' -d '{"a_id":1,"b_id":2}'
+curl -X POST http://localhost:8000/api/fertilizer/recipes/1/pairs \
+  -H 'Content-Type: application/json' -d '{"a_id":2,"b_id":3}'
+
+# 4) 查看重算结果：连通分量 / 翻转组合 / A、B 分罐清单
+curl 'http://localhost:8000/api/fertilizer/state?recipe_id=1'
+
+# 5) 改用量 / 关系 / 容量 -> 立即重算
+curl -X PUT http://localhost:8000/api/fertilizer/items/1 \
+  -H 'Content-Type: application/json' -d '{"amount":0}'          # 硝酸钙改为 0：不参与
+curl -X PUT http://localhost:8000/api/fertilizer/recipes/1 \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"复核配方","zone_id":2,"cap_a":400,"cap_b":400}'   # 容量不够 -> overflow
+
+# 6) 删除关系 / 肥料 / 配方
+curl -X DELETE http://localhost:8000/api/fertilizer/pairs/1
+curl -X DELETE http://localhost:8000/api/fertilizer/items/3
+curl -X DELETE http://localhost:8000/api/fertilizer/recipes/1
+
+# 7) 导出 JSON
+curl -OJ 'http://localhost:8000/api/fertilizer/export?recipe_id=1'
+```
+
+首次启动内置一份「越冬番茄母液配方」（挂在番茄区，A/B 罐各 2000 mL，共 5 种肥料、3 条不相容关系），不相容图为一条链加一个孤立点，最优解恰好 **A=B=1500 mL（体积差 0）**：A 罐硝酸钙 + 硫酸镁，B 罐硝酸钾 + 磷酸二氢钾 + 微量元素。
+
+### 复核示例（二着色 / 奇环 / 最小超额 / 决胜）
+
+沿用 Docker Compose 启动（`docker compose up --build -d`），用内置配方（默认 id=1）复核：
+
+```bash
+# 1) 内置配方：可分配、双罐 1500/1500、体积差 0；A 罐 ID 序列 [1,3]
+curl -s 'http://localhost:8000/api/fertilizer/state?recipe_id=1' | python3 -c '
+import sys, json
+r = json.load(sys.stdin)["selected"]["result"]
+c = r["decision"]["chosen"]
+print(r["status"], "A:", c["used_a"], "B:", c["used_b"], "差:", c["diff"])
+print("A 罐:", [(f["id"], f["name"]) for f in c["tank_a"]])
+print("B 罐:", [(f["id"], f["name"]) for f in c["tank_b"]])
+assert r["status"] == "ok" and c["used_a"] == 1500 and c["used_b"] == 1500 and c["diff"] == 0
+assert c["a_ids"] == [1, 3]
+'
+
+# 2) 加一条硝酸钙(1)✕硫酸镁(3) 制造奇环：返回最短冲突环 1-2-3，不给分罐
+curl -s -X POST http://localhost:8000/api/fertilizer/recipes/1/pairs \
+  -H 'Content-Type: application/json' -d '{"a_id":1,"b_id":3}' | python3 -c '
+import sys, json
+r = json.load(sys.stdin)["selected"]["result"]
+ring = [n["id"] for n in r["conflict_ring"]]
+print(r["status"], "最短冲突环:", ring)
+assert r["status"] == "conflict" and ring == [1, 2, 3] and r["decision"] is None
+assert all(e["in_ring"] for e in r["edges"] if {e["a_id"], e["b_id"]} <= {1, 2, 3})
+'
+# 重复登记同一条关系（反向）应 400
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8000/api/fertilizer/recipes/1/pairs \
+  -H 'Content-Type: application/json' -d '{"a_id":3,"b_id":1}'   # 400
+
+# 3) 删除刚加的关系恢复可分配，再把 A/B 容量都改成 1000 -> 容量无解，
+#    但返回最小总超额方案（1500/1500，A 超 500 + B 超 500 = 1000），不是“无法分配”
+PID=$(curl -s http://localhost:8000/api/fertilizer/state | python3 -c '
+import sys, json
+for p in json.load(sys.stdin)["selected"]["pairs"]:
+    if {p["a_id"], p["b_id"]} == {1, 3}: print(p["id"])')
+curl -s -X DELETE "http://localhost:8000/api/fertilizer/pairs/$PID" > /dev/null
+curl -s -X PUT http://localhost:8000/api/fertilizer/recipes/1 \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"越冬番茄母液配方","zone_id":1,"cap_a":1000,"cap_b":1000,"note":""}' | python3 -c '
+import sys, json
+r = json.load(sys.stdin)["selected"]["result"]
+c = r["decision"]["chosen"]
+print(r["status"], "A/B:", c["used_a"], c["used_b"], "最小总超额:", c["excess_total"])
+assert r["status"] == "overflow" and c["excess_total"] == 1000
+assert c["tank_a"] and c["tank_b"]   # 仍给出完整分罐明细
+'
+
+# 4) 把某肥料用量改成 0：立即变为不参与（不进图、不占罐）；非正整数用量 400
+curl -s -o /dev/null -w '%{http_code}\n' -X PUT http://localhost:8000/api/fertilizer/items/5 \
+  -H 'Content-Type: application/json' -d '{"amount":1.5}'          # 400
+
+# 5) 导出 JSON（含分量、冲突环或组合枚举、最终分罐）
+curl -OJ 'http://localhost:8000/api/fertilizer/export?recipe_id=1'
+```
+
+页面侧复核：进入 `/fertilizer`，默认选中「越冬番茄母液配方」，绿色徽标「可分配」且 A/B 两栏各显示 1500/2000 mL、剩余 500 mL；展开「查看全部 4 种翻转组合」可见前两行均可行、体积差 0，按 A 罐 ID 序列选中 `[1, 3]` 行。在左下「两两不相容关系」选「硝酸钙 ✕ 硫酸镁」提交，页面立即变红：顶部「不相容冲突（奇环）」、出现 `#1 硝酸钙 ✕ #2 硝酸钾 ✕ #3 硫酸镁 ✕ #1（闭环）` 冲突链，分罐清单提示存在奇环暂不分罐。删除该条关系后恢复；把左上方 A/B 罐容量都改为 1000 保存，徽标变黄「容量超额（已给出最小超额方案）」，两罐进度条变红、显示「超额 500 mL」，而不是空白或“无法分配”。在肥料明细表把「微量元素」用量改为 0 并失焦，该肥料立即移入「不参与 / 待定」、分量与组合数同步减少。
+
 ## 内置示例
 
 
@@ -561,16 +690,25 @@ curl -OJ "http://localhost:8000/api/drip/export?round_id=$RID2"
 | PUT | `/api/drip/zones/{id}` | 修改单分区入口压力与五项巡检参数，保存后整轮重算 |
 | POST | `/api/drip/zones/{id}/samples` | 录入滴头样本（首 head / 中 middle / 尾 tail + 编号 + 流量）；单条或 `{"batch":[...]}`，同分区同段编号唯一 |
 | DELETE | `/api/drip/samples/{id}` | 删除单个滴头样本并整轮重算 |
+| GET | `/fertilizer` | 肥料母液分罐页面 |
+| GET | `/api/fertilizer/state` | 配方 / 分区及选中配方整体重算结果；参数 `recipe_id`、`zone_id`（按分区筛选） |
+| GET | `/api/fertilizer/export` | 按 `recipe_id` 导出单份配方（含分量 / 冲突环 / 组合枚举 / 分罐结果），或按 `zone_id` 导出列表 JSON |
+| POST/PUT/DELETE | `/api/fertilizer/recipes[/{id}]` | 母液配方增改删（名称 + 分区 + A/B 罐容量；保存容量立即重算；删除级联肥料与关系） |
+| POST | `/api/fertilizer/recipes/{id}/items` | 添加肥料（名称 + 所需母液量 mL，非负整数；0 不参与求解） |
+| PUT/DELETE | `/api/fertilizer/items/{id}` | 修改肥料名称 / 用量（改用量立即重算）或删除（自动清理其不相容关系） |
+| POST | `/api/fertilizer/recipes/{id}/pairs` | 登记两种肥料的两两不相容关系（无向、不可重复、不可自指） |
+| DELETE | `/api/fertilizer/pairs/{id}` | 删除一条不相容关系并立即重算 |
 
 ## 项目结构
 
 ```
-├── app.py              # Flask 路由 + SQLite 持久化（轮灌 + 水质 + 病害 + 积温 + 滴灌）
+├── app.py              # Flask 路由 + SQLite 持久化（轮灌 + 水质 + 病害 + 积温 + 滴灌 + 母液分罐）
 ├── scheduler.py        # 轮灌编排与校验引擎（15 分钟槽）
 ├── water_quality.py    # 水质指标校验与「连续两次」状态机
 ├── disease_trace.py    # 病害接触追踪：确诊/到访/消毒按时间重放引擎
 ├── crop_heat.py        # 作物积温：温度截断 / 梯形积分 / 午夜拆分 / 缺口登记 / 7 完整日外推
 ├── drip_uniform.py     # 滴灌巡检：低四分位 DU / 共享供压异常 / 支管压损 / 滴头堵塞判定
+├── fertilizer_split.py # 母液分罐：不相容图连通分量二着色 / 奇环检测 / 全局翻转组合寻优 / 最小超额方案
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
@@ -586,5 +724,7 @@ curl -OJ "http://localhost:8000/api/drip/export?round_id=$RID2"
     ├── heat.js         # 批次 / 读数录入 / 曲线 / 日台账 / 缺口 / 外推 / 导出
     ├── drip.html       # 滴灌巡检页面结构
     ├── drip.js         # 轮次 / 参数 / 首中尾样本录入 / 判定卡 / 维护清单 / 筛选 / 导出
-    └── style.css       # 时间轴等样式（water.css、disease.css、heat.css、drip.css 为对应页面补充样式）
+    ├── fertilizer.html # 母液分罐页面结构
+    ├── fertilizer.js   # 配方 / 肥料用量 / 不相容关系登记 / 冲突链 / 分罐清单 / 组合枚举 / 导出
+    └── style.css       # 时间轴等样式（water.css、disease.css、heat.css、drip.css、fertilizer.css 为对应页面补充样式）
 ```
