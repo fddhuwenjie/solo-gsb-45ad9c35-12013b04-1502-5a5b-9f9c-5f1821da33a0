@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>肥料母液分罐</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/water.css">
+<link rel="stylesheet" href="/heat.css">
+<link rel="stylesheet" href="/drip.css">
+<link rel="stylesheet" href="/fertilizer.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🧪</span>
+    <div>
+      <h1>肥料母液分罐</h1>
+      <p class="subtitle">不相容图连通分量二着色 · 分量翻转枚举取双罐容量内体积差最小 · 用量/关系/容量改动立即重算</p>
+    </div>
+  </div>
+  <div class="top-actions">
+    <nav class="page-tabs">
+      <a class="btn" href="/">💧 轮灌编排台</a>
+      <a class="btn" href="/water">🧪 水质监测</a>
+      <a class="btn" href="/disease">🔬 病害追踪</a>
+      <a class="btn" href="/heat">🌡️ 积温预测</a>
+      <a class="btn" href="/drip">💧 滴灌巡检</a>
+      <a class="btn primary" href="/fertilizer">🧪 母液分罐</a>
+    </nav>
+    <button class="btn" id="btn-export">⬇ 导出 JSON</button>
+  </div>
+</header>
+
+<main class="water-layout heat-layout fertilizer-layout">
+  <!-- 左侧：配方列表 + 新建/编辑 + 肥料录入 + 不相容关系 -->
+  <aside class="sidebar">
+    <section class="card">
+      <h2>母液配方 <small>复用温室分区</small></h2>
+      <ul class="entity-list" id="recipe-list"></ul>
+      <form class="zone-form" id="recipe-form">
+        <input type="hidden" name="id">
+        <label>配方名称
+          <input type="text" name="name" placeholder="如：番茄茬母液配方" required>
+        </label>
+        <label>所属温室分区
+          <select name="zone_id" id="recipe-zone" required></select>
+        </label>
+        <div class="cap-row">
+          <label>A 罐容量 <small>mL，正整数</small>
+            <input type="number" name="cap_a_ml" min="1" step="1" required>
+          </label>
+          <label>B 罐容量 <small>mL，正整数</small>
+            <input type="number" name="cap_b_ml" min="1" step="1" required>
+          </label>
+        </div>
+        <label>备注（可空）
+          <input type="text" name="note" placeholder="如：钙盐与磷酸盐 / 硫酸盐分罐">
+        </label>
+        <div class="form-actions">
+          <button class="btn small primary" type="submit" id="recipe-submit">新建配方</button>
+          <button class="btn small hidden" type="button" id="recipe-cancel">取消编辑</button>
+        </div>
+        <p class="form-hint">保存配方后在下方录入肥料与不相容关系；容量修改后立即重算。</p>
+      </form>
+      <div class="case-ops">
+        <button class="btn small danger-solid" id="btn-recipe-delete" disabled>删除配方</button>
+      </div>
+    </section>
+
+    <section class="card" id="fert-card">
+      <h2>肥料录入 <small>只对用量 &gt; 0 的肥料求解</small></h2>
+      <form class="zone-form" id="fert-form">
+        <label>肥料名称
+          <input type="text" name="name" placeholder="如：硝酸钙" required>
+        </label>
+        <label>所需母液量 <small>mL，非负整数；0 = 暂不参与求解</small>
+          <input type="number" name="amount_ml" min="0" step="1" value="0" required>
+        </label>
+        <div class="form-actions">
+          <button class="btn small primary" type="submit">添加肥料</button>
+        </div>
+      </form>
+      <p class="form-hint">同配方下肥料名称唯一；用量为正整数才进入不相容图。</p>
+    </section>
+
+    <section class="card" id="edge-card">
+      <h2>不相容关系 <small>两两必须分到不同罐</small></h2>
+      <form class="zone-form" id="edge-form">
+        <div class="edge-row">
+          <label>肥料 A
+            <select name="fert_a" required></select>
+          </label>
+          <span class="edge-x">⚡</span>
+          <label>肥料 B
+            <select name="fert_b" required></select>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button class="btn small primary" type="submit">添加不相容关系</button>
+        </div>
+      </form>
+      <p class="form-hint">只需登记两两不相容对；出现奇环时右侧给出最短冲突环。</p>
+    </section>
+  </aside>
+
+  <!-- 右侧：总览 + 冲突环 / 超额 + 分罐清单 + 连通分量 + 明细 -->
+  <section class="main-panel">
+    <div class="card heat-overview">
+      <div class="overview-head">
+        <div class="overall">
+          <span class="overall-label" id="fs-title">未选择配方</span>
+          <span class="case-badge" id="fs-badge"></span>
+        </div>
+        <div class="filters">
+          <label>快速选配方
+            <select id="filter-recipe"></select>
+          </label>
+          <label>按分区筛选
+            <select id="filter-zone"><option value="">全部分区</option></select>
+          </label>
+        </div>
+      </div>
+      <p class="case-meta" id="fs-meta"></p>
+      <ul class="heat-stat-row" id="fs-stats"></ul>
+      <div class="forecast-box" id="fs-rule"></div>
+    </div>
+
+    <div class="card hidden" id="conflict-card">
+      <h2>⛓ 冲突链：不相容奇环 <small>奇环无法二着色，必有一对不相容肥料同罐</small></h2>
+      <div id="conflict-body"></div>
+    </div>
+
+    <div class="card hidden" id="overflow-card">
+      <h2>📦 容量无解：最小总超额方案 <small>从全部翻转组合中选出，不得只显示“无法分配”</small></h2>
+      <div id="overflow-body"></div>
+    </div>
+
+    <div class="card">
+      <h2>分罐清单与占用量 <small>目标：满足容量前提下两罐体积差最小</small></h2>
+      <div id="tank-panels" class="tank-panels"></div>
+    </div>
+
+    <div class="card">
+      <h2>不相容图连通分量 <small>各分量二着色后有两种翻转方向，枚举其全局组合</small></h2>
+      <div id="component-list" class="component-list"></div>
+    </div>
+
+    <div class="card">
+      <h2>肥料与不相容关系明细 <small>编辑用量 / 删除关系后立即重算</small></h2>
+      <div class="filters">
+        <label class="check-line">
+          <input type="checkbox" id="detail-active-only"> 只看用量 &gt; 0（参与求解）
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table class="sample-table fert-table">
+          <thead>
+            <tr><th>ID</th><th>肥料名称</th><th>所需母液量（mL）</th>
+            <th>分罐</th><th>不相容于</th><th></th></tr>
+          </thead>
+          <tbody id="fert-rows"></tbody>
+        </table>
+      </div>
+      <h3 class="edge-list-title">已登记不相容关系（<span id="edge-count">0</span>）</h3>
+      <div id="edge-chips" class="edge-chips"></div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+<script src="/fertilizer.js"></script>
+</body>
+</html>

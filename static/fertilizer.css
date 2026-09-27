@@ -1,0 +1,126 @@
+/* 肥料母液分罐页样式（复用 style.css / water.css / heat.css / drip.css 的变量与组件） */
+
+.fertilizer-layout { grid-template-columns: 340px minmax(0, 1fr); }
+
+/* ---------- 左侧表单 ---------- */
+.cap-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cap-row label { font-size: 12px; color: var(--ink-soft); display: flex; flex-direction: column; gap: 3px; }
+.cap-row input { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; width: 100%; }
+
+.edge-row { display: grid; grid-template-columns: 1fr 22px 1fr; gap: 6px; align-items: end; }
+.edge-row label { font-size: 12px; color: var(--ink-soft); display: flex; flex-direction: column; gap: 3px; }
+.edge-row select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; width: 100%; }
+.edge-x { text-align: center; color: var(--amber); font-size: 15px; padding-bottom: 7px; }
+
+/* ---------- 配方列表 ---------- */
+.recipe-item { cursor: pointer; flex-direction: column; align-items: stretch; gap: 3px; }
+.recipe-item .line1 { display: flex; align-items: center; gap: 6px; }
+.recipe-item .zone-chip {
+  font-size: 10.5px; color: var(--green-dark); background: #e6f4e6;
+  border: 1px solid #b8dabb; border-radius: 999px; padding: 0 7px; white-space: nowrap;
+}
+.recipe-item .meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; }
+.status-dot.ok { background: var(--green); }
+.status-dot.overflow { background: #f59e0b; }
+.status-dot.conflict { background: var(--red); }
+.status-dot.empty { background: #9bb09a; }
+.status-dot.error { background: var(--blackout); }
+
+/* ---------- 总览徽标 / 依据 ---------- */
+.case-badge.ok { background: #e6f4e6; color: var(--green-dark); border: 1px solid #b8dabb; }
+.case-badge.overflow { background: #fff4de; color: var(--amber); border: 1px solid #f0d49a; }
+.case-badge.conflict { background: var(--red-bg); color: var(--red); border: 1px solid #f0b5af; }
+.case-badge.empty { background: #eef3ec; color: var(--ink-soft); border: 1px solid var(--line); }
+.case-badge.error { background: #f0f0f0; color: var(--blackout); border: 1px solid var(--line); }
+
+.forecast-box.ok { background: #e6f4e6; border: 1px solid #b8dabb; color: var(--green-dark); }
+.forecast-box.overflow { background: #fff4de; border: 1px solid #f0d49a; color: var(--amber); }
+.forecast-box.conflict { background: var(--red-bg); border: 1px solid #f0b5af; color: var(--red); }
+.forecast-box.empty { background: #eef3ec; border: 1px solid var(--line); color: var(--ink-soft); }
+.forecast-box.error { background: #f0f0f0; border: 1px solid var(--line); color: var(--blackout); }
+.forecast-box ul { margin: 4px 0 0; padding-left: 18px; }
+.forecast-box li { margin: 2px 0; font-size: 11.5px; }
+
+/* ---------- 冲突环 ---------- */
+#conflict-card { border: 1px solid #f0b5af; }
+.cycle-chain { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.cycle-node {
+  font-size: 13px; font-weight: 600; padding: 5px 12px; border-radius: 999px;
+  background: var(--red-bg); color: var(--red); border: 1px solid #f0b5af;
+}
+.cycle-arrow { color: var(--red); font-weight: 700; }
+.cycle-meta { font-size: 12px; color: var(--ink-soft); margin: 6px 0 0; }
+.cycle-meta b { color: var(--red); }
+
+/* ---------- 超额 ---------- */
+#overflow-card { border: 1px solid #f0d49a; }
+.overflow-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.ov-tank { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: #fcfefb; }
+.ov-tank .ov-line { display: flex; justify-content: space-between; font-size: 12.5px; margin: 2px 0; }
+.ov-tank .ov-vol { font-size: 18px; font-weight: 700; }
+.ov-tank.over { border-color: #f0d49a; background: #fffaf0; }
+.ov-tank.over .ov-vol { color: var(--amber); }
+.ov-tank .ov-extra { color: var(--red); font-weight: 700; }
+.overflow-note { font-size: 12px; color: var(--ink-soft); margin: 8px 0 0; }
+
+/* ---------- 分罐清单 ---------- */
+.tank-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tank-box { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.tank-box.tank-a { border-top: 4px solid #1565c0; }
+.tank-box.tank-b { border-top: 4px solid #6a1b9a; }
+.tank-box.over { border-color: #f0d49a; }
+.tank-box.tank-a.over { border-top-color: var(--red); }
+.tank-box.tank-b.over { border-top-color: var(--red); }
+.tank-head { padding: 8px 12px; background: #f7faf6; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.tank-head .tank-name { font-size: 14px; font-weight: 700; }
+.tank-head .tank-vol { font-size: 13px; color: var(--ink-soft); margin-left: auto; }
+.tank-head .tank-vol b { font-size: 16px; }
+.tank-head .tank-vol.over b { color: var(--red); }
+.tank-bar { height: 6px; background: #eef2ec; }
+.tank-bar i { display: block; height: 100%; background: var(--green); }
+.tank-bar i.over { background: var(--red); }
+.tank-list { list-style: none; margin: 0; padding: 6px 0; min-height: 48px; }
+.tank-list li {
+  display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 12.5px;
+}
+.tank-list li + li { border-top: 1px dashed #eef2ec; }
+.tank-list .t-fid { font-size: 10.5px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+.tank-list .t-name { flex: 1; min-width: 0; }
+.tank-list .t-ml { font-weight: 700; }
+.tank-list .t-cid { font-size: 10px; color: var(--ink-soft); }
+.tank-empty { padding: 14px; text-align: center; color: var(--ink-soft); font-size: 12px; }
+
+/* ---------- 连通分量 ---------- */
+.component-list { display: flex; flex-direction: column; gap: 8px; }
+.comp-box { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: #fcfefb; }
+.comp-box.bad { border-color: #f0b5af; background: #fff8f7; }
+.comp-title { font-size: 12.5px; font-weight: 700; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.comp-title .comp-tag { font-weight: 400; font-size: 10.5px; color: var(--ink-soft); }
+.comp-sides { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.comp-side { font-size: 11.5px; border-radius: 6px; padding: 4px 9px; }
+.comp-side.c0 { background: #e8f1fb; color: #1565c0; border: 1px solid #c3d9ef; }
+.comp-side.c1 { background: #f3e8fa; color: #6a1b9a; border: 1px solid #dfc3ee; }
+.comp-side.flip-note { font-size: 10.5px; color: var(--ink-soft); background: #eef3ec; border: 1px solid var(--line); }
+
+/* ---------- 明细表 ---------- */
+.fert-table td.tank-a-cell { color: #1565c0; font-weight: 700; }
+.fert-table td.tank-b-cell { color: #6a1b9a; font-weight: 700; }
+.fert-table td.inactive-cell { color: var(--ink-soft); }
+.fert-table tr.inactive-row td { background: #f7f8f6; }
+.edge-list-title { margin: 14px 0 8px; font-size: 13px; color: var(--ink); }
+.edge-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.edge-chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
+  border: 1px solid #f0d49a; background: #fffaf0; color: var(--amber);
+  border-radius: 999px; padding: 2px 6px 2px 10px;
+}
+.edge-chip .edge-del {
+  border: none; background: none; cursor: pointer; color: var(--ink-soft);
+  font-size: 12px; padding: 0 3px; border-radius: 50%;
+}
+.edge-chip .edge-del:hover { color: #fff; background: var(--red); }
+.edge-chip.inactive { opacity: .55; }
+.edge-empty { color: var(--ink-soft); font-size: 12px; }
+.inline-edit { display: inline-flex; gap: 4px; align-items: center; }
+.inline-edit input { width: 86px; font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 5px; }

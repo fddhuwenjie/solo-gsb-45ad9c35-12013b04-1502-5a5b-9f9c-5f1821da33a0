@@ -12,6 +12,7 @@ import water_quality as wq
 import disease_trace as dt
 import crop_heat as ch
 import drip_uniform as dri
+import fertilizer_split as fsplit
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "data", "irrigation.db"))
@@ -188,6 +189,33 @@ def init_db():
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_drip_samples_zone_pos_label
             ON drip_samples(drip_zone_id, position, label);
+        CREATE TABLE IF NOT EXISTS fertilizer_recipes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            zone_id    INTEGER REFERENCES zones(id) ON DELETE SET NULL,
+            name       TEXT NOT NULL,
+            cap_a_ml   INTEGER NOT NULL,
+            cap_b_ml   INTEGER NOT NULL,
+            note       TEXT NOT NULL DEFAULT '',
+            created    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_fertilizer_recipes_zone
+            ON fertilizer_recipes(zone_id);
+        CREATE TABLE IF NOT EXISTS fertilizer_items (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipe_id  INTEGER NOT NULL REFERENCES fertilizer_recipes(id) ON DELETE CASCADE,
+            name       TEXT NOT NULL,
+            amount_ml  INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_fertilizer_items_recipe_name
+            ON fertilizer_items(recipe_id, name);
+        CREATE TABLE IF NOT EXISTS fertilizer_incompat (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipe_id  INTEGER NOT NULL REFERENCES fertilizer_recipes(id) ON DELETE CASCADE,
+            fert_a     INTEGER NOT NULL REFERENCES fertilizer_items(id) ON DELETE CASCADE,
+            fert_b     INTEGER NOT NULL REFERENCES fertilizer_items(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_fertilizer_incompat_pair
+            ON fertilizer_incompat(recipe_id, fert_a, fert_b);
         """
     )
     _migrate_db(db)
@@ -206,6 +234,8 @@ def init_db():
         _seed_heat(db)
     if db.execute("SELECT COUNT(*) FROM drip_rounds").fetchone()[0] == 0:
         _seed_drip(db)
+    if db.execute("SELECT COUNT(*) FROM fertilizer_recipes").fetchone()[0] == 0:
+        _seed_fertilizer(db)
     db.close()
 
 
@@ -585,6 +615,49 @@ def _seed_drip(db):
     db.commit()
 
 
+# ---------------------------------------------------------------- 肥料分罐示例数据
+
+def _seed_fertilizer(db):
+    """一份肥料母液分罐示例配方（番茄区）。
+
+    含钙肥料（硝酸钙）与磷酸盐（磷酸一铵）、硫酸盐（硫酸镁 / 硫酸钾）
+    不相容；硝酸钾与硫酸镁 / 磷酸一铵不相容。不相容图含一个二分连通
+    分量 + 一个孤立分量（微量元素），A/B 各 900 mL 时存在可行组合且
+    以体积差最小（850/800，差 50 mL）定案；尿素用量 0，仅登记不求解。
+    """
+    zone = db.execute("SELECT id FROM zones WHERE name=?", ("番茄区",)).fetchone()
+    now = datetime.now().replace(microsecond=0).isoformat()
+    rc = db.execute(
+        "INSERT INTO fertilizer_recipes(zone_id,name,cap_a_ml,cap_b_ml,note,created)"
+        " VALUES(?,?,?,?,?,?)",
+        (zone["id"] if zone else None, "番茄茬母液配方", 900, 900,
+         "内置示例：钙盐与磷酸盐 / 硫酸盐分罐", now))
+    rid = rc.lastrowid
+    # (名称, 用量 mL)
+    items = [
+        ("硝酸钙", 500), ("硫酸镁", 250), ("磷酸一铵", 300),
+        ("硫酸钾", 200), ("硝酸钾", 350), ("微量元素", 50),
+        ("尿素", 0),
+    ]
+    fid = {}
+    for name, ml in items:
+        cur = db.execute(
+            "INSERT INTO fertilizer_items(recipe_id,name,amount_ml) VALUES(?,?,?)",
+            (rid, name, ml))
+        fid[name] = cur.lastrowid
+    # 不相容关系（两两）
+    pairs = [
+        ("硝酸钙", "硫酸镁"), ("硝酸钙", "磷酸一铵"), ("硝酸钙", "硫酸钾"),
+        ("硫酸镁", "硝酸钾"), ("磷酸一铵", "硝酸钾"),
+    ]
+    for a, b in pairs:
+        x, y = sorted((fid[a], fid[b]))
+        db.execute(
+            "INSERT INTO fertilizer_incompat(recipe_id,fert_a,fert_b) VALUES(?,?,?)",
+            (rid, x, y))
+    db.commit()
+
+
 # ---------------------------------------------------------------- 序列化
 
 def valve_dict(row):
@@ -821,6 +894,8 @@ def api_reset():
     db = get_db()
     db.executescript(
         "DELETE FROM drip_samples; DELETE FROM drip_zones; DELETE FROM drip_rounds; "
+        "DELETE FROM fertilizer_incompat; DELETE FROM fertilizer_items; "
+        "DELETE FROM fertilizer_recipes; "
         "DELETE FROM heat_readings; DELETE FROM heat_batches; "
         "DELETE FROM schedule_items; "
         # 全量重置轮灌对象：病害 / 水质历史保留，仅解除事件对旧分区的外键引用
@@ -840,6 +915,8 @@ def api_reset():
             _seed_heat(db)
         if db.execute("SELECT COUNT(*) FROM drip_rounds").fetchone()[0] == 0:
             _seed_drip(db)
+        if db.execute("SELECT COUNT(*) FROM fertilizer_recipes").fetchone()[0] == 0:
+            _seed_fertilizer(db)
     else:
         db.execute("UPDATE settings SET value='100' WHERE key='total_flow'")
         db.commit()
@@ -975,6 +1052,11 @@ def api_delete_zone(zid):
     if drip_used:
         return bad(f"该分区在 {drip_used} 轮滴灌均匀度巡检中已有记录，"
                    "请先删除对应巡检轮次后再删除分区")
+    fert_used = db.execute(
+        "SELECT COUNT(*) c FROM fertilizer_recipes WHERE zone_id=?", (zid,)).fetchone()["c"]
+    if fert_used:
+        return bad(f"该分区下仍有 {fert_used} 份肥料母液配方，"
+                   "请先删除配方（或改绑其他分区）后再删除分区")
     db.execute("DELETE FROM schedule_items WHERE zone_id=?", (zid,))
     # 冻结案件的重放结果已固化为快照，历史事件解除分区引用后即可删除
     db.execute("UPDATE disease_events SET zone_id=NULL WHERE zone_id=?", (zid,))
@@ -2322,6 +2404,374 @@ def api_drip_delete_sample(sample_id):
     db.execute("DELETE FROM drip_samples WHERE id=?", (sample_id,))
     db.commit()
     return jsonify(build_drip_state(row["round_id"]))
+
+
+# ---------------------------------------------------------------- API: 肥料母液分罐
+
+def _fertilizer_items(db, recipe_id):
+    return [{
+        "id": r["id"], "recipe_id": recipe_id,
+        "name": r["name"], "amount_ml": r["amount_ml"],
+    } for r in db.execute(
+        "SELECT * FROM fertilizer_items WHERE recipe_id=? ORDER BY id", (recipe_id,))]
+
+
+def _fertilizer_edges(db, recipe_id):
+    return [{
+        "id": r["id"], "recipe_id": recipe_id,
+        "fert_a": r["fert_a"], "fert_b": r["fert_b"],
+    } for r in db.execute(
+        "SELECT * FROM fertilizer_incompat WHERE recipe_id=? ORDER BY id", (recipe_id,))]
+
+
+def _fertilizer_compute(db, recipe_row):
+    """取该配方全部肥料与不相容关系整体重算分罐。
+
+    容量为正整数已由写入校验保证；枚举规模超限（>2^16 种翻转组合）属
+    输入性错误，向上抛 ValueError 由接口返回 400。
+    """
+    items = _fertilizer_items(db, recipe_row["id"])
+    edges = _fertilizer_edges(db, recipe_row["id"])
+    result = fsplit.solve(items, edges,
+                          recipe_row["cap_a_ml"], recipe_row["cap_b_ml"])
+    result["fertilizers"] = items
+    result["incompat"] = edges
+    return result
+
+
+def _fertilizer_recipe_dict(db, row, zone_name, with_result=True):
+    out = {
+        "id": row["id"], "zone_id": row["zone_id"], "zone_name": zone_name,
+        "name": row["name"], "cap_a_ml": row["cap_a_ml"],
+        "cap_b_ml": row["cap_b_ml"], "note": row["note"], "created": row["created"],
+    }
+    if with_result:
+        result = _fertilizer_compute(db, row)
+        out["result"] = result
+        out["fert_count"] = len(result.get("fertilizers", []))
+        out["active_count"] = result.get("active_count", 0)
+        out["status"] = result.get("status")
+        out["status_label"] = result.get("status_label")
+        out["vol_a"] = result.get("vol_a", 0)
+        out["vol_b"] = result.get("vol_b", 0)
+    return out
+
+
+def build_fertilizer_state(recipe_id=None, zone_id=None):
+    db = get_db()
+    zones = [{"id": r["id"], "name": r["name"]}
+             for r in db.execute("SELECT id,name FROM zones ORDER BY id")]
+    rows = db.execute("SELECT * FROM fertilizer_recipes ORDER BY id").fetchall()
+    zone_by_id = {z["id"]: z["name"] for z in zones}
+
+    # 列表卡对单个配方的求解失败做降级（如翻转组合超过枚举上限）：
+    # 该配方以 error 卡呈现，其余配方仍可正常使用，避免整页不可操作。
+    def card(row):
+        try:
+            return _fertilizer_recipe_dict(
+                db, row, zone_by_id.get(row["zone_id"], "（分区已删除）"))
+        except ValueError as e:
+            return {
+                "id": row["id"], "zone_id": row["zone_id"],
+                "zone_name": zone_by_id.get(row["zone_id"], "（分区已删除）"),
+                "name": row["name"], "cap_a_ml": row["cap_a_ml"],
+                "cap_b_ml": row["cap_b_ml"], "note": row["note"],
+                "created": row["created"],
+                "fert_count": db.execute(
+                    "SELECT COUNT(*) c FROM fertilizer_items WHERE recipe_id=?",
+                    (row["id"],)).fetchone()["c"],
+                "active_count": db.execute(
+                    "SELECT COUNT(*) c FROM fertilizer_items WHERE recipe_id=?"
+                    " AND amount_ml>0", (row["id"],)).fetchone()["c"],
+                "status": fsplit.ERROR,
+                "status_label": fsplit.STATUS_LABEL[fsplit.ERROR],
+                "vol_a": None, "vol_b": None, "error": str(e),
+            }
+
+    cards = [card(r) for r in rows]
+
+    if recipe_id is None and zone_id is not None:
+        recipe_id = next((c["id"] for c in cards if c["zone_id"] == zone_id), None)
+    if recipe_id is None and zone_id is None:
+        # 默认选最近一个可求解配方；求解超限的配方只作为 error 卡列出，
+        # 由用户进入后删除 / 减量，避免列表接口 400。
+        recipe_id = next((c["id"] for c in reversed(cards)
+                          if c["status"] != fsplit.ERROR), None)
+    selected_row = next((r for r in rows if r["id"] == recipe_id), None)
+    if recipe_id is not None and selected_row is None:
+        raise KeyError("配方不存在")
+
+    # 显式选中 / 默认选中的配方：求解错误直接向上抛，由接口返回 400
+    # （卡片上的“删除 / 减量”操作不依赖求解结果，列表页仍能打开）
+    selected = None
+    if selected_row is not None:
+        selected = _fertilizer_recipe_dict(
+            db, selected_row, zone_by_id.get(selected_row["zone_id"], "（分区已删除）"))
+
+    filtered = zone_id is not None
+    visible = [c for c in cards if not filtered or c["zone_id"] == zone_id]
+    return {
+        "zones": zones,
+        "filter_zone_id": zone_id,
+        "recipes": visible if filtered else cards,
+        "selected_id": selected_row["id"] if selected_row else None,
+        "selected": selected,
+    }
+
+
+def build_fertilizer_export(recipe_id=None, zone_id=None):
+    state = build_fertilizer_state(recipe_id, zone_id)
+    return {
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "filter_zone_id": state["filter_zone_id"],
+        "zones": state["zones"],
+        "selected_id": state["selected_id"],
+        "selected": state["selected"],
+        "recipes": [
+            {"id": r["id"], "zone_id": r["zone_id"], "zone_name": r["zone_name"],
+             "name": r["name"], "cap_a_ml": r["cap_a_ml"], "cap_b_ml": r["cap_b_ml"],
+             "note": r["note"], "created": r["created"], "status": r["status"],
+             "status_label": r["status_label"], "fert_count": r["fert_count"],
+             "active_count": r["active_count"], "vol_a": r["vol_a"], "vol_b": r["vol_b"]}
+            for r in state["recipes"]
+        ] if state["selected"] is None else None,
+    }
+
+
+def _commit_and_respond(db, recipe_id=None, status=200):
+    """先整体重算确认可求解再 commit；求解失败回滚本次写入并返回 400。"""
+    try:
+        payload = build_fertilizer_state(recipe_id)
+    except ValueError as e:
+        db.rollback()
+        return bad(str(e))
+    db.commit()
+    return jsonify(payload), status
+
+
+def _read_recipe_payload(db, data):
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise ValueError("缺少字段：配方名称")
+    zone_raw = data.get("zone_id")
+    if zone_raw in (None, ""):
+        raise ValueError("请选择所属温室分区")
+    try:
+        zone_id = int(zone_raw)
+    except (TypeError, ValueError):
+        raise ValueError("请选择所属温室分区")
+    if not db.execute("SELECT 1 FROM zones WHERE id=?", (zone_id,)).fetchone():
+        raise ValueError("请选择现有温室分区")
+    cap_a = fsplit.validate_capacity(data.get("cap_a_ml"), "A 罐容量")
+    cap_b = fsplit.validate_capacity(data.get("cap_b_ml"), "B 罐容量")
+    note = (data.get("note") or "").strip()
+    return name, zone_id, cap_a, cap_b, note
+
+
+@app.route("/fertilizer")
+def fertilizer_page():
+    return send_from_directory(app.static_folder, "fertilizer.html")
+
+
+@app.get("/api/fertilizer/state")
+def api_fertilizer_state():
+    recipe_id = request.args.get("recipe_id", type=int)
+    zone_id = request.args.get("zone_id", type=int)
+    try:
+        return jsonify(build_fertilizer_state(recipe_id, zone_id))
+    except KeyError:
+        return bad("配方不存在", 404)
+    except ValueError as e:
+        return bad(str(e))
+
+
+@app.get("/api/fertilizer/export")
+def api_fertilizer_export():
+    recipe_id = request.args.get("recipe_id", type=int)
+    zone_id = request.args.get("zone_id", type=int)
+    try:
+        payload = build_fertilizer_export(recipe_id, zone_id)
+    except KeyError:
+        return bad("配方不存在", 404)
+    except ValueError as e:
+        return bad(str(e))
+    if payload["selected"] is None:
+        return bad("没有可导出的配方")
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    fname = f"fertilizer-split-recipe-{payload['selected_id']}.json"
+    resp = Response(body, mimetype="application/json; charset=utf-8")
+    resp.headers["Content-Disposition"] = \
+        f"attachment; filename=fertilizer-split.json; filename*=UTF-8''{fname}"
+    return resp
+
+
+# ---- 配方 ----
+
+@app.post("/api/fertilizer/recipes")
+def api_fertilizer_create_recipe():
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    try:
+        name, zone_id, cap_a, cap_b, note = _read_recipe_payload(db, data)
+    except ValueError as e:
+        return bad(str(e))
+    cur = db.execute(
+        "INSERT INTO fertilizer_recipes(zone_id,name,cap_a_ml,cap_b_ml,note,created)"
+        " VALUES(?,?,?,?,?,?)",
+        (zone_id, name, cap_a, cap_b, note,
+         datetime.now().replace(microsecond=0).isoformat()))
+    return _commit_and_respond(db, cur.lastrowid, 201)
+
+
+@app.put("/api/fertilizer/recipes/<int:recipe_id>")
+def api_fertilizer_update_recipe(recipe_id):
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    if not db.execute("SELECT 1 FROM fertilizer_recipes WHERE id=?",
+                      (recipe_id,)).fetchone():
+        return bad("配方不存在", 404)
+    try:
+        name, zone_id, cap_a, cap_b, note = _read_recipe_payload(db, data)
+    except ValueError as e:
+        return bad(str(e))
+    db.execute(
+        "UPDATE fertilizer_recipes SET zone_id=?,name=?,cap_a_ml=?,cap_b_ml=?,"
+        "note=? WHERE id=?",
+        (zone_id, name, cap_a, cap_b, note, recipe_id))
+    # 容量变更后整体重算，可求解才提交
+    return _commit_and_respond(db, recipe_id)
+
+
+@app.delete("/api/fertilizer/recipes/<int:recipe_id>")
+def api_fertilizer_delete_recipe(recipe_id):
+    db = get_db()
+    if not db.execute("SELECT 1 FROM fertilizer_recipes WHERE id=?",
+                      (recipe_id,)).fetchone():
+        return bad("配方不存在", 404)
+    db.execute("DELETE FROM fertilizer_recipes WHERE id=?", (recipe_id,))
+    return _commit_and_respond(db)
+
+
+# ---- 肥料 ----
+
+def _require_recipe(db, recipe_id):
+    row = db.execute("SELECT * FROM fertilizer_recipes WHERE id=?",
+                     (recipe_id,)).fetchone()
+    if row is None:
+        return None, bad("配方不存在", 404)
+    return row, None
+
+
+@app.post("/api/fertilizer/recipes/<int:recipe_id>/items")
+def api_fertilizer_create_item(recipe_id):
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    _row, err = _require_recipe(db, recipe_id)
+    if err:
+        return err
+    name = (data.get("name") or "").strip()
+    if not name:
+        return bad("缺少字段：肥料名称")
+    try:
+        amount = fsplit.validate_amount(data.get("amount_ml"))
+    except ValueError as e:
+        return bad(str(e))
+    try:
+        db.execute(
+            "INSERT INTO fertilizer_items(recipe_id,name,amount_ml) VALUES(?,?,?)",
+            (recipe_id, name, amount))
+    except sqlite3.IntegrityError:
+        db.rollback()
+        return bad("该配方下肥料名称已存在")
+    return _commit_and_respond(db, recipe_id, 201)
+
+
+@app.put("/api/fertilizer/items/<int:item_id>")
+def api_fertilizer_update_item(item_id):
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    row = db.execute("SELECT * FROM fertilizer_items WHERE id=?",
+                     (item_id,)).fetchone()
+    if not row:
+        return bad("肥料不存在", 404)
+    name = (data.get("name") or "").strip()
+    if not name:
+        return bad("缺少字段：肥料名称")
+    try:
+        amount = fsplit.validate_amount(data.get("amount_ml"))
+    except ValueError as e:
+        return bad(str(e))
+    try:
+        db.execute("UPDATE fertilizer_items SET name=?,amount_ml=? WHERE id=?",
+                   (name, amount, item_id))
+    except sqlite3.IntegrityError:
+        db.rollback()
+        return bad("该配方下肥料名称已存在")
+    # 用量变更后整体重算，可求解才提交
+    return _commit_and_respond(db, row["recipe_id"])
+
+
+@app.delete("/api/fertilizer/items/<int:item_id>")
+def api_fertilizer_delete_item(item_id):
+    db = get_db()
+    row = db.execute("SELECT recipe_id FROM fertilizer_items WHERE id=?",
+                     (item_id,)).fetchone()
+    if not row:
+        return bad("肥料不存在", 404)
+    db.execute("DELETE FROM fertilizer_items WHERE id=?", (item_id,))
+    # 不相容关系由外键级联删除；删除后整体重算并提交
+    return _commit_and_respond(db, row["recipe_id"])
+
+
+# ---- 不相容关系 ----
+
+def _normalize_edge_payload(db, recipe_id, data):
+    """规整两两不相容关系：两肥料必须属于本配方且不能相同，小 ID 在前。"""
+    try:
+        a, b = int(data.get("fert_a")), int(data.get("fert_b"))
+    except (TypeError, ValueError):
+        raise ValueError("请选择两种肥料")
+    if a == b:
+        raise ValueError("不相容关系必须选择两种不同的肥料")
+    rows = db.execute(
+        "SELECT id FROM fertilizer_items WHERE recipe_id=? AND id IN (?,?)",
+        (recipe_id, a, b)).fetchall()
+    if len(rows) != 2:
+        raise ValueError("请选择本配方下的两种肥料")
+    return (a, b) if a < b else (b, a)
+
+
+@app.post("/api/fertilizer/recipes/<int:recipe_id>/incompat")
+def api_fertilizer_create_incompat(recipe_id):
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    _row, err = _require_recipe(db, recipe_id)
+    if err:
+        return err
+    try:
+        a, b = _normalize_edge_payload(db, recipe_id, data)
+    except ValueError as e:
+        return bad(str(e))
+    try:
+        db.execute(
+            "INSERT INTO fertilizer_incompat(recipe_id,fert_a,fert_b) VALUES(?,?,?)",
+            (recipe_id, a, b))
+    except sqlite3.IntegrityError:
+        db.rollback()
+        return bad("这两种肥料的不相容关系已存在")
+    # 关系变更后整体重算，可求解（无奇环 / 未超枚举上限）才提交
+    return _commit_and_respond(db, recipe_id, 201)
+
+
+@app.delete("/api/fertilizer/incompat/<int:edge_id>")
+def api_fertilizer_delete_incompat(edge_id):
+    db = get_db()
+    row = db.execute("SELECT recipe_id FROM fertilizer_incompat WHERE id=?",
+                     (edge_id,)).fetchone()
+    if not row:
+        return bad("不相容关系不存在", 404)
+    db.execute("DELETE FROM fertilizer_incompat WHERE id=?", (edge_id,))
+    return _commit_and_respond(db, row["recipe_id"])
 
 
 # ---------------------------------------------------------------- 错误
